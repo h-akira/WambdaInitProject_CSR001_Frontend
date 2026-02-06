@@ -1,0 +1,35 @@
+version: 0.2
+
+env:
+  variables:
+    S3_BUCKET: "hakira0627-s3-wambda-csr001-main"
+    CDK_STACK_NAME: "stack-wambda-csr001-infra-main"
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+  pre_build:
+    commands:
+      - echo "Installing Frontend dependencies"
+      - npm ci
+  build:
+    commands:
+      - echo "Building and deploying Frontend..."
+      - npm run build
+      - aws s3 sync dist/ s3://$S3_BUCKET/CloudFront/ --delete
+  post_build:
+    commands:
+      - echo "Invalidating CloudFront cache..."
+      - |
+        DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+          --stack-name $CDK_STACK_NAME \
+          --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" \
+          --output text 2>/dev/null) || true
+        if [ -n "$DISTRIBUTION_ID" ] && [ "$DISTRIBUTION_ID" != "None" ]; then
+          echo "Creating CloudFront invalidation for distribution: $DISTRIBUTION_ID"
+          aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"
+        else
+          echo "WARNING: CloudFront distribution ID not found. Stack '$CDK_STACK_NAME' may not exist or have no DistributionId output."
+          echo "Skipping cache invalidation."
+        fi
